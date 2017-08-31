@@ -77,7 +77,8 @@ preferences {
         input "prefLogModeEvents", "bool", title:"Log Mode Events?", defaultValue: true, required: true
         input "prefLogHubProperties", "bool", title:"Log Hub Properties?", defaultValue: true, required: true
         input "prefLogLocationProperties", "bool", title:"Log Location Properties?", defaultValue: true, required: true
-        input "prefLogSHMEvents", "bool", title:"Log Smart Home Monitor events?", defaultValue: true, required: true	    
+        input "prefLogSHMEvents", "bool", title:"Log Smart Home Monitor events?", defaultValue: true, required: true
+        
     }
     
     section("Devices To Monitor:") {
@@ -108,8 +109,8 @@ preferences {
         input "sleepSensors", "capability.sleepSensor", title: "Sleep Sensors", multiple: true, required: false
         input "smokeDetectors", "capability.smokeDetector", title: "Smoke Detectors", multiple: true, required: false
         input "soundSensors", "capability.soundSensor", title: "Sound Sensors", multiple: true, required: false
-	input "spls", "capability.soundPressureLevel", title: "Sound Pressure Level Sensors", multiple: true, required: false
-	input "switches", "capability.switch", title: "Switches", multiple: true, required: false
+		input "spls", "capability.soundPressureLevel", title: "Sound Pressure Level Sensors", multiple: true, required: false
+		input "switches", "capability.switch", title: "Switches", multiple: true, required: false
         input "switchLevels", "capability.switchLevel", title: "Switch Levels", multiple: true, required: false
         input "tamperAlerts", "capability.tamperAlert", title: "Tamper Alerts", multiple: true, required: false
         input "temperatures", "capability.temperatureMeasurement", title: "Temperature Sensors", multiple: true, required: false
@@ -212,8 +213,8 @@ def updated() {
     state.deviceAttributes << [ devices: 'sleepSensors', attributes: ['sleeping']]
     state.deviceAttributes << [ devices: 'smokeDetectors', attributes: ['smoke']]
     state.deviceAttributes << [ devices: 'soundSensors', attributes: ['sound']]
-    state.deviceAttributes << [ devices: 'spls', attributes: ['soundPressureLevel']]
-    state.deviceAttributes << [ devices: 'switches', attributes: ['switch']]
+	state.deviceAttributes << [ devices: 'spls', attributes: ['soundPressureLevel']]
+	state.deviceAttributes << [ devices: 'switches', attributes: ['switch']]
     state.deviceAttributes << [ devices: 'switchLevels', attributes: ['level']]
     state.deviceAttributes << [ devices: 'tamperAlerts', attributes: ['tamper']]
     state.deviceAttributes << [ devices: 'temperatures', attributes: ['temperature']]
@@ -269,8 +270,9 @@ def handleModeEvent(evt) {
  * 
  *  Log SHM Alarm status changes.
  **/
-  def alarmStatusHandler(evt) {
-    logger("alarmStatusHandler(): SHM Mode changed to: ${evt.value}","info")
+ 
+ def alarmStatusHandler(evt) {
+    logger("alarmStatusHandler(): SHM Mode changed to: ${evt.value}","debug")
     def locationId = escapeStringForInfluxDB(location.id)
     def locationName = escapeStringForInfluxDB(location.name)
     def tz = '"' + escapeStringForInfluxDB(location.timeZone.ID) + '"'
@@ -279,7 +281,7 @@ def handleModeEvent(evt) {
     def times = getSunriseAndSunset()
     def srt = '"' + times.sunrise.format("HH:mm", location.timeZone) + '"'
     def sst = '"' + times.sunset.format("HH:mm", location.timeZone) + '"'
-    def alarmstatus = '"' + escapeStringForInfluxDB(location.currentState("alarmSystemStatus")?.value)  + '"'
+	def alarmstatus = '"' + escapeStringForInfluxDB(location.currentState("alarmSystemStatus")?.value)  + '"'
     def data = "_stLocation,locationId=${locationId},locationName=${locationName},latitude=${location.latitude},longitude=${location.longitude},timeZone=${tz} mode=${mode},hubCount=${hubCount}i,sunriseTime=${srt},sunsetTime=${sst},alarmstatus=${alarmstatus}"            	
     postToInfluxDB(data)
 }
@@ -323,7 +325,12 @@ def handleEvent(evt) {
     
     // Unit tag and fields depend on the event type:
     //  Most string-valued attributes can be translated to a binary value too.
-    if ('acceleration' == evt.name) { // acceleration: Calculate a binary value (active = 1, inactive = 0)
+    if (!(evt.value)) {
+        	logger("Found null value in ${evt.name} - consider dropping these?","warn")
+            return
+    }
+
+if ('acceleration' == evt.name) { // acceleration: Calculate a binary value (active = 1, inactive = 0)
         unit = 'acceleration'
         value = '"' + value + '"'
         valueBinary = ('active' == evt.value) ? '1i' : '0i'
@@ -449,6 +456,20 @@ def handleEvent(evt) {
         valueBinary = ('followSchedule' == evt.value) ? '0i' : '1i'
         data += ",unit=${unit} value=${value},valueBinary=${valueBinary}"
     }
+    else if ('heatingSetpoint' == evt.name) { // heatingSetpoint: Catch nulls
+        if (!(evt.value)) {
+        	logger("Found null value in ${evt.name} - dropping event","warn")
+            return
+        	}
+        data += ",unit=${unit} value=${value}"
+    }
+    else if ('thermostatSetpoint' == evt.name) { // thermostatSetpoint: Catch nulls
+        if (!(evt.value)) {
+        	logger("Found null value in ${evt.name} - dropping event","warn")
+            return
+        	}
+        data += ",unit=${unit} value=${value}"
+    }    
     else if ('threeAxis' == evt.name) { // threeAxis: Format to x,y,z values.
         unit = 'threeAxis'
         def valueXYZ = evt.value.split(",")
@@ -463,6 +484,20 @@ def handleEvent(evt) {
         valueBinary = ('touched' == evt.value) ? '1i' : '0i'
         data += ",unit=${unit} value=${value},valueBinary=${valueBinary}"
     }
+    else if ('trackData' == evt.name) { // trackData:  Drop this as tmi
+    	logger("Found ${evt.name} - dropping event","warn")
+        return
+    }
+    else if ('trackDescription' == evt.name) { // trackDescription: Catch nulls
+        if (!(evt.value)) {
+        	logger("Found null value in ${evt.name} - changing to none","warn")
+            value = '"none"'
+        }
+        else {
+        	value = '"' + value + '"'
+        }
+        data += ",unit=${unit} value=${value}"
+    }   
     else if ('optimisation' == evt.name) { // optimisation: Calculate a binary value (active = 1, inactive = 0)
         unit = 'optimisation'
         value = '"' + value + '"'
@@ -575,8 +610,10 @@ def logSystemProperties() {
             def times = getSunriseAndSunset()
             def srt = '"' + times.sunrise.format("HH:mm", location.timeZone) + '"'
             def sst = '"' + times.sunset.format("HH:mm", location.timeZone) + '"'
-	    def alarmstatus = '"' + escapeStringForInfluxDB(location.currentState("alarmSystemStatus")?.value)  + '"'
+			def alarmstatus = '"' + escapeStringForInfluxDB(location.currentState("alarmSystemStatus")?.value)  + '"'
+            logger("alarmstatus = ${alarmstatus}", "warn")
             def data = "_stLocation,locationId=${locationId},locationName=${locationName},latitude=${location.latitude},longitude=${location.longitude},timeZone=${tz} mode=${mode},hubCount=${hubCount}i,sunriseTime=${srt},sunsetTime=${sst},alarmstatus=${alarmstatus}"            	
+            logger("_stLocation data: ${data}", "warn")
             postToInfluxDB(data)
         } catch (e) {
 		    logger("logSystemProperties(): Unable to log Location properties: ${e}","error")
@@ -713,10 +750,10 @@ private manageSubscriptions() {
     
     // Subscribe to mode events:
     if (prefLogModeEvents) subscribe(location, "mode", handleModeEvent)
-
+    
     // Subscribe to SHM alarm events
     if (prefLogSHMEvents) subscribe(location, "alarmSystemStatus", alarmStatusHandler)
-        
+    
     // Subscribe to device attributes (iterate over each attribute for each device collection in state.deviceAttributes):
     def devs // dynamic variable holding device collection.
     state.deviceAttributes.each { da ->
